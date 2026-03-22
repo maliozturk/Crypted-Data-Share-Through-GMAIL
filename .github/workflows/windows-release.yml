@@ -1,0 +1,64 @@
+name: Build Windows App
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Build Windows executable and installer
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1
+
+      - name: Read project version
+        id: version
+        shell: powershell
+        run: |
+          $version = python -c "import tomllib, pathlib; data = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8')); print(data['project']['version'])"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypted-mail-windows-${{ steps.version.outputs.version }}
+          path: |
+            dist/Crypted Mail.exe
+            dist/installer/setup.exe
+          if-no-files-found: error
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Crypted Mail.exe
+            dist/installer/setup.exe
+          generate_release_notes: true

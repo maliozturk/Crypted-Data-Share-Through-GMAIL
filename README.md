@@ -31,10 +31,8 @@ You need:
 
 Use the packaged Windows release provided for this project.
 
-Depending on how the release was shared with you, that may be:
-
-- a standalone `Crypted Mail.exe`
-- or an installed desktop app created from the Windows installer
+- a standalone `setup.exe` at setup_exe folder.
+- or run build_installer.ps1 powershell script through a powershell.
 
 If Windows SmartScreen appears, review the prompt and continue only if you trust the build source.
 
