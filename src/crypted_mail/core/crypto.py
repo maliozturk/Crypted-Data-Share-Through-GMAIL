@@ -4,20 +4,16 @@ import base64
 from datetime import datetime, timezone
 
 from nacl import pwhash, secret, utils
-from nacl.public import SealedBox
 
 from crypted_mail.core.envelope import (
     ENVELOPE_VERSION,
-    PUBLIC_KEY_ALGORITHM,
-    PUBLIC_KEY_MODE,
     SHARED_PASSPHRASE_ALGORITHM,
     SHARED_PASSPHRASE_MODE,
     parse_armored_message,
     serialize_envelope,
 )
 from crypted_mail.core.exceptions import EnvelopeError
-from crypted_mail.core.keys import public_key_from_b64, unlock_private_key
-from crypted_mail.core.models import LocalProfile, MessageEnvelope, RecipientRecord
+from crypted_mail.core.models import MessageEnvelope
 
 
 class CryptoService:
@@ -74,43 +70,6 @@ class CryptoService:
             )
         except Exception as exc:
             raise EnvelopeError("Unable to decrypt the shared-passphrase message. Check the passphrase and try again.") from exc
-        return plaintext_bytes.decode("utf-8")
-
-    def encrypt_for_recipient(
-        self,
-        plaintext: str,
-        recipient: RecipientRecord,
-        sender_hint: str | None = None,
-        note: str | None = None,
-    ) -> str:
-        recipient_key = public_key_from_b64(recipient.public_key_b64)
-        sealed_box = SealedBox(recipient_key)
-        ciphertext = sealed_box.encrypt(plaintext.encode("utf-8"))
-        envelope = MessageEnvelope(
-            version=ENVELOPE_VERSION,
-            mode=PUBLIC_KEY_MODE,
-            algorithm=PUBLIC_KEY_ALGORITHM,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            ciphertext_b64=base64.b64encode(ciphertext).decode("ascii"),
-            recipient_key_id=recipient.key_id,
-            sender_hint=sender_hint,
-            note=note,
-        )
-        return serialize_envelope(envelope)
-
-    def decrypt_message(self, armored_text: str, profile: LocalProfile, passphrase: str) -> str:
-        envelope = parse_armored_message(armored_text)
-        if envelope.mode != PUBLIC_KEY_MODE:
-            raise EnvelopeError("This message is not a public-key encrypted message.")
-        if envelope.recipient_key_id != profile.key_id:
-            raise EnvelopeError("This encrypted message was not addressed to the current local profile.")
-
-        private_key = unlock_private_key(profile.protected_private_key, passphrase)
-        sealed_box = SealedBox(private_key)
-        try:
-            plaintext_bytes = sealed_box.decrypt(base64.b64decode(envelope.ciphertext_b64.encode("ascii")))
-        except Exception as exc:
-            raise EnvelopeError("Unable to decrypt message with the current private key.") from exc
         return plaintext_bytes.decode("utf-8")
 
     def parse_message(self, armored_text: str) -> MessageEnvelope:
