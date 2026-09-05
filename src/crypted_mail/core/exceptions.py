@@ -20,3 +20,43 @@ class RecipientNotFoundError(CryptedMailError):
 
 class GmailConfigurationError(CryptedMailError):
     """Raised when Gmail OAuth setup is missing or invalid."""
+
+
+class AttachmentError(CryptedMailError):
+    """Base exception for encrypted attachment failures."""
+
+
+class UnsupportedAttachmentTypeError(AttachmentError):
+    """Raised when a chosen file is not a supported archive."""
+
+
+class AttachmentTooLargeError(AttachmentError):
+    """Raised when attachments exceed what Gmail will accept."""
+
+
+class AttachmentDecryptionError(AttachmentError):
+    """Raised when an encrypted attachment cannot be decrypted."""
+
+
+class AttachmentIntegrityError(AttachmentError):
+    """Raised when a recovered attachment fails its integrity checks."""
+
+
+class AttachmentCancelled(AttachmentError):
+    """Raised when the user cancels an attachment operation."""
+
+
+class UpdateError(CryptedMailError):
+    """Base exception for update failures."""
+
+
+class UpdateCheckError(UpdateError):
+    """Raised when the update check cannot complete."""
+
+
+class UpdateVerificationError(UpdateError):
+    """Raised when a downloaded update fails verification."""
+
+
+class UpdateInstallError(UpdateError):
+    """Raised when an update installer cannot be started."""

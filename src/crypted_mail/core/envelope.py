@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Sequence
 
 from crypted_mail.core.exceptions import EnvelopeError
 from crypted_mail.core.models import MessageEnvelope
@@ -72,10 +73,18 @@ def parse_armored_message(armored_text: str) -> MessageEnvelope:
     return envelope
 
 
-def build_email_body(armored_payload: str, note: str | None = None) -> str:
+def build_email_body(
+    armored_payload: str,
+    note: str | None = None,
+    *,
+    attachment_names: Sequence[str] | None = None,
+) -> str:
     lines = []
     if note:
         lines.append(f"Sender note: {note}")
+        lines.append("")
+    if attachment_names:
+        lines.append(f"Encrypted attachments: {', '.join(attachment_names)}")
         lines.append("")
     lines.append(armored_payload)
     lines.append("")

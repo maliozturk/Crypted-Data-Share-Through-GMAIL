@@ -30,4 +30,15 @@ if (-not $iscc) {
     throw "Inno Setup compiler (iscc) is not installed or not on PATH. Install Inno Setup to build setup.exe."
 }
 
-& $iscc installer\crypted_mail.iss
+# The version is single-sourced from src/crypted_mail/__init__.py and passed
+# in here, so the .iss never hardcodes it.
+$version = (python "$PSScriptRoot\get_version.py").Trim()
+$fileVersion = (python "$PSScriptRoot\get_version.py" --file-version).Trim()
+if (-not $version) { throw "Could not resolve version from src/crypted_mail/__init__.py" }
+Write-Host "Building Crypted Mail $version (file version $fileVersion)"
+
+& $iscc "/DAppVersion=$version" "/DAppFileVersion=$fileVersion" installer\crypted_mail.iss
+# $ErrorActionPreference = "Stop" does not catch native exe failures.
+if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+Write-Host "Installer written to dist\installer\CryptedMail-Setup-$version.exe"

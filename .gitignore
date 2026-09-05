@@ -8,6 +8,8 @@ venv/
 # Packaging and build outputs
 build/
 dist/
+# Second distribution channel, retired in 0.2.0 - releases are the source of truth
+setup_exe/
 *.spec.bak
 *.egg-info/
 pip-wheel-metadata/

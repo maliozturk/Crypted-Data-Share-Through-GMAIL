@@ -1,6 +1,6 @@
 # Crypted Mail
 
-Crypted Mail is a Windows desktop app for encrypting message text, sending the encrypted payload through Gmail, and decrypting messages locally on your machine.
+Crypted Mail is a Windows desktop app for encrypting message text and file attachments, sending the encrypted payload through Gmail, and decrypting everything locally on your machine.
 
 The normal workflow uses a shared passphrase. A legacy public-key workflow is also available in the `Advanced` tab for older messages and compatibility.
 
@@ -9,7 +9,8 @@ The normal workflow uses a shared passphrase. A legacy public-key workflow is al
 Use Crypted Mail when you want to:
 
 - write a message in the Windows app
-- encrypt it before it is sent
+- attach `.zip` or `.tar.gz` archives
+- encrypt the message and every attachment before anything is sent
 - send it through your Gmail account
 - share the secret passphrase separately by phone, chat, or in person
 - decrypt encrypted messages later inside the app
@@ -29,12 +30,25 @@ You need:
 
 ## Step 1: Get The App
 
-Use the packaged Windows release provided for this project.
+Download the latest installer from the releases page:
 
-- a standalone `setup.exe` at setup_exe folder.
-- or run build_installer.ps1 powershell script through a powershell.
+<https://github.com/maliozturk/Crypted-Data-Share-Through-GMAIL/releases/latest>
 
-If Windows SmartScreen appears, review the prompt and continue only if you trust the build source.
+- `CryptedMail-Setup-<version>.exe` - the installer (recommended)
+- `CryptedMail-Portable-<version>.exe` - a single executable, no install
+- `SHA256SUMS.txt` - checksums for both
+
+Or build it yourself with `scripts/build_installer.ps1`.
+
+Crypted Mail installs **per user**, into `%LOCALAPPDATA%\Programs\Crypted Mail`. It never asks for administrator rights.
+
+To check your download before running it:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\CryptedMail-Setup-0.2.0.exe
+```
+
+Compare the result with `SHA256SUMS.txt`. If Windows SmartScreen appears, review the prompt and continue only if you trust the build source - these builds are not code-signed.
 
 ## Step 2: Create Your Google OAuth File
 
@@ -119,12 +133,30 @@ If you saved a default passphrase earlier, you can click:
 
 That loads the remembered passphrase into the form automatically.
 
+## Attaching Encrypted Files
+
+In the `Compose` tab, the `Encrypted Attachments` box takes `.zip` and `.tar.gz` (or `.tgz`) archives.
+
+1. Click `Add Archive...` and pick one or more archives.
+2. Fill in the passphrase as usual and click `Encrypt And Send`.
+
+Each archive is encrypted **on your machine** into its own `.cmenc` file - for example `report.zip` becomes `report.zip.cmenc` - and attached to the email. The message body still holds the encrypted text, plus a list of what was attached.
+
+Notes:
+
+- The same passphrase protects the message and every attachment.
+- Total attachments are limited to about 18 MB, because Gmail caps a message at 25 MB.
+- Only `.zip` and `.tar.gz` are accepted. This is a convenience check, not a security boundary.
+- Large files are encrypted in a streaming fashion, so a big archive does not exhaust memory. The progress bar shows how far along it is and the window stays responsive.
+- The *filename* of each attachment is visible to Gmail. The contents are not. If a filename itself is sensitive, rename the archive before attaching it.
+
 ## Step 6: Tell The Recipient What They Need
 
 The recipient needs:
 
 - the email you sent
 - the encrypted content inside it
+- any `.cmenc` attachments, saved to their machine
 - the same shared passphrase
 
 Important:
@@ -143,6 +175,18 @@ Then:
 3. Click `Decrypt`.
 
 The app detects the message type automatically and shows the decrypted plaintext in the output box.
+
+### Decrypting an attachment
+
+If the email carried a `.cmenc` file, save it somewhere first, then in the same `Decrypt` tab:
+
+1. Enter the shared passphrase in `Shared passphrase`.
+2. Click `Open Encrypted File...` and pick the `.cmenc` file.
+3. Click `Decrypt And Save As...` and choose where to write the recovered archive.
+
+The app checks the recovered file against the SHA-256 recorded when it was encrypted and tells you when it verifies. If the passphrase is wrong, or the file was damaged or altered in transit, it refuses and writes nothing.
+
+The filename shown before you decrypt comes from the file itself and is **not** verified until decryption succeeds, so treat it as a hint until then.
 
 ## The Normal User Workflow
 
@@ -185,6 +229,29 @@ Typical legacy flow:
 
 If you do not already know you need this mode, you probably do not need it.
 
+## Updates
+
+Crypted Mail keeps itself up to date. On startup it checks the project's GitHub releases, and if a newer version is available it downloads the installer, verifies its SHA-256 against the published `SHA256SUMS.txt`, installs it silently and restarts. Because the app installs per user, this never raises a UAC prompt.
+
+If the checksum does not match, the download is deleted and nothing is installed.
+
+You can turn this off in the `Setup` tab by unchecking `Automatically install updates`, and you can check on demand with `Check for updates now`. Two other ways to disable updates entirely:
+
+- set the environment variable `CRYPTED_MAIL_DISABLE_UPDATES=1`
+- create an empty file at `%LOCALAPPDATA%\CryptedMail\updates\DISABLED`
+
+Every update attempt is recorded in `%LOCALAPPDATA%\CryptedMail\updates\update.log`, including the expected and actual checksums.
+
+The portable `.exe` does not install updates over itself; it tells you when a new version exists and links to the releases page.
+
+### If you installed with pip
+
+`pip install crypted-mail` gives you the Python library; `pip install crypted-mail[desktop]` adds the desktop app. In that case the app never installs anything itself - it checks PyPI and shows you the command to run:
+
+```powershell
+pip install -U crypted-mail
+```
+
 ## Where The App Stores Data On Windows
 
 The app stores its local files under:
@@ -204,10 +271,14 @@ If passphrase remembering is enabled, the app also tries to use secure Windows c
 
 ## Security Notes
 
-- The app uses Argon2id for key derivation and XSalsa20-Poly1305 authenticated encryption through NaCl `SecretBox`.
+- Message text uses Argon2id for key derivation and XSalsa20-Poly1305 authenticated encryption through NaCl `SecretBox`.
+- Attachments use Argon2id plus XChaCha20-Poly1305 in libsodium's *secretstream* mode, encrypted in 256 KiB chunks. Every chunk is authenticated, the chunk order is fixed, and the end of the stream is marked - so a truncated or edited `.cmenc` file is detected rather than silently producing partial output. The file header (filename, size, checksum, key-derivation settings) is authenticated too.
 - A strong passphrase matters a lot. Use a long, hard-to-guess passphrase.
 - Share the passphrase separately from the email itself.
 - Anyone with both the encrypted message and the passphrase can decrypt it.
+- Attachment filenames are visible to Gmail; their contents are not.
+- Updates are verified by SHA-256 over HTTPS. That proves the download was not corrupted or swapped in transit, but the builds are **not code-signed**, so it does not prove who produced them. If you need a stronger guarantee, disable automatic updates and install releases manually after checking them yourself.
+- While a message with attachments is being sent, the encrypted `.cmenc` copies live briefly in your temp folder and are deleted afterwards. Only ciphertext is written there, never your original files.
 
 ## Troubleshooting
 
@@ -229,6 +300,23 @@ If decrypting fails:
 - confirm you entered the correct shared passphrase
 - for old public-key messages, use the `Legacy profile passphrase` field instead
 
+If an attachment will not decrypt:
+
+- make sure you saved the whole `.cmenc` file, not a partial download
+- confirm the passphrase matches the one used to send it
+- a "damaged or modified" error means the file failed its authentication check; ask the sender to send it again
+
+If sending fails with a size error:
+
+- Gmail allows about 25 MB per message; Crypted Mail stops you at roughly 18 MB of attachments
+- split the archive into smaller parts and send them separately
+
+If updates are not installing:
+
+- check `%LOCALAPPDATA%\CryptedMail\updates\update.log`
+- confirm `Automatically install updates` is checked in the `Setup` tab
+- the portable `.exe` never self-installs; use the installer build instead
+
 ## Development
 
 If you are developing the app from source:
@@ -237,9 +325,11 @@ If you are developing the app from source:
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e .[dev]
-pytest
+$env:QT_QPA_PLATFORM = "offscreen"; pytest
 python -m crypted_mail.desktop.main
 ```
+
+The version lives in exactly one place, `src/crypted_mail/__init__.py`. `pyproject.toml`, the installer and the executable's version resource all derive from it, and CI refuses to publish a tag that disagrees with it. To release, bump that one line and push a matching `vX.Y.Z` tag.
 
 ## Build The Windows App
 

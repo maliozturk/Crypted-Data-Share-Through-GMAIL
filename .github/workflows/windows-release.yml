@@ -24,6 +24,26 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Read the version and validate the tag BEFORE the build, so a mismatch
+      # fails in seconds instead of after a ten-minute PyInstaller run.
+      - name: Read project version
+        id: version
+        shell: powershell
+        run: |
+          $version = (python scripts/get_version.py).Trim()
+          if (-not $version) { throw "Could not resolve the project version" }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+      - name: Verify tag matches __version__
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: powershell
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $expected = "v" + "${{ steps.version.outputs.version }}"
+          if ($tag -ne $expected) {
+            throw "Tag $tag does not match __version__ ($expected). Bump src/crypted_mail/__init__.py."
+          }
+
       - name: Install Inno Setup
         run: choco install innosetup -y
 
@@ -38,27 +58,47 @@ jobs:
         run: |
           powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1
 
-      - name: Read project version
-        id: version
+      - name: Stage release assets and checksums
         shell: powershell
         run: |
-          $version = python -c "import tomllib, pathlib; data = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8')); print(data['project']['version'])"
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $v = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force dist\release | Out-Null
+          Copy-Item "dist\installer\CryptedMail-Setup-$v.exe" "dist\release\" -Force
+          Copy-Item "dist\Crypted Mail.exe" "dist\release\CryptedMail-Portable-$v.exe" -Force
+          # -Encoding ascii on purpose: Out-File defaults to UTF-8 *with BOM* on
+          # Windows PowerShell 5.1, and a BOM corrupts the first hash for a
+          # naive parser. Two spaces match coreutils sha256sum format.
+          $lines = Get-ChildItem dist\release -File |
+                   Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+                   Sort-Object Name |
+                   ForEach-Object {
+                     $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLower()
+                     "$h  $($_.Name)"
+                   }
+          $lines | Out-File -FilePath dist\release\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\release\SHA256SUMS.txt | Write-Host
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: crypted-mail-windows-${{ steps.version.outputs.version }}
-          path: |
-            dist/Crypted Mail.exe
-            dist/installer/setup.exe
+          path: dist/release/*
           if-no-files-found: error
 
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/Crypted Mail.exe
-            dist/installer/setup.exe
+          files: dist/release/*
           generate_release_notes: true
+          append_body: true
+          body: |
+
+            ### Verify your download (SHA-256)
+
+            ```powershell
+            Get-FileHash -Algorithm SHA256 .\CryptedMail-Setup-${{ steps.version.outputs.version }}.exe
+            ```
+
+            Compare the result against `SHA256SUMS.txt` attached to this release.
+            The app performs this same check automatically before installing an update.

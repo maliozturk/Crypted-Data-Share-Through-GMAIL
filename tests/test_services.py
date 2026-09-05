@@ -88,3 +88,123 @@ def test_packaging_assets_exist():
     assert (root / "scripts" / "build_windows.ps1").exists()
     assert (root / "scripts" / "build_installer.ps1").exists()
     assert (root / "installer" / "crypted_mail.iss").exists()
+
+
+def test_mail_send_with_attachment_uses_media_upload(monkeypatch, repository, mail_service, tmp_path):
+    """Attachments must go through the resumable media path, not {"raw": ...}."""
+    captured = {}
+
+    class FakeSend:
+        def execute(self):
+            return {"id": "gmail-message-456"}
+
+    class FakeMessages:
+        def send(self, userId, body, media_body=None):
+            captured["userId"] = userId
+            captured["body"] = body
+            captured["media_body"] = media_body
+            return FakeSend()
+
+    class FakeUsers:
+        def messages(self):
+            return FakeMessages()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    class FakeCredentials:
+        valid = True
+        expired = False
+        refresh_token = "refresh"
+
+        def to_json(self):
+            return "{}"
+
+    repository.token_store.save("alice@example.com", '{"token": "abc"}')
+    monkeypatch.setattr(
+        "crypted_mail.services.mail_service.Credentials.from_authorized_user_info",
+        lambda data, scopes: FakeCredentials(),
+    )
+    monkeypatch.setattr(
+        "crypted_mail.services.mail_service.build", lambda *args, **kwargs: FakeService()
+    )
+
+    attachment = tmp_path / "report.zip.cmenc"
+    attachment.write_bytes(b"encrypted-bytes")
+
+    message_id = mail_service.send_encrypted_email(
+        sender="alice@example.com",
+        recipient_email="bob@example.com",
+        subject="Secret",
+        armored_payload="cm1:body",
+        attachments=[attachment],
+    )
+
+    assert message_id == "gmail-message-456"
+    assert captured["body"] == {}
+    assert captured["media_body"] is not None
+
+
+def test_oversized_message_is_rejected_before_upload(mail_service):
+    from crypted_mail.core.exceptions import AttachmentTooLargeError
+    import pytest as _pytest
+
+    with _pytest.raises(AttachmentTooLargeError):
+        mail_service._ensure_within_gmail_limit(26 * 1024 * 1024)
+
+
+def test_packaging_assets_exist_including_version_script():
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "scripts" / "build_windows.ps1").exists()
+    assert (root / "scripts" / "build_installer.ps1").exists()
+    assert (root / "scripts" / "get_version.py").exists()
+    assert (root / "installer" / "crypted_mail.iss").exists()
+
+
+def test_version_is_single_sourced():
+    import re as _re
+
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'dynamic = ["version"]' in pyproject
+    assert 'version = {attr = "crypted_mail.__version__"}' in pyproject
+
+    iss = (root / "installer" / "crypted_mail.iss").read_text(encoding="utf-8")
+    assert "AppVersion={#AppVersion}" in iss
+    assert "VersionInfoVersion={#AppFileVersion}" in iss
+    assert "OutputBaseFilename=CryptedMail-Setup-{#AppVersion}" in iss
+    # No hardcoded version anywhere in the installer script.
+    assert not _re.search(r"^\s*AppVersion\s*=\s*\d", iss, _re.M)
+
+
+def test_version_matches_file_version_rules():
+    """A non X.Y.Z version would make parse_version reject every release,
+    silently cutting every client off from updates forever."""
+    import re as _re
+
+    from crypted_mail import __version__
+    from crypted_mail.services.update_service import parse_version
+
+    assert _re.match(r"^\d+\.\d+\.\d+$", __version__)
+    assert parse_version(__version__) is not None
+
+
+def test_installer_has_update_safety_directives():
+    root = Path(__file__).resolve().parents[1]
+    iss = (root / "installer" / "crypted_mail.iss").read_text(encoding="utf-8")
+    assert "PrivilegesRequired=lowest" in iss
+    assert "CloseApplications=yes" in iss
+    assert "SetupMutex=" in iss
+    # AppMutex is deliberately absent: with /VERYSILENT /SUPPRESSMSGBOXES its
+    # prompt is suppressed and the default answer aborts the install.
+    assert "AppMutex=" not in iss
+    assert "{param:relaunch|0}" in iss
+    assert "AppId={{" in iss
+
+
+def test_spec_declares_a_version_resource():
+    root = Path(__file__).resolve().parents[1]
+    spec = (root / "crypted_mail.spec").read_text(encoding="utf-8")
+    assert "VSVersionInfo" in spec
+    assert "version=version_info," in spec

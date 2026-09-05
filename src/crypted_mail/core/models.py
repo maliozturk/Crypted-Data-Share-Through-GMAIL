@@ -1,7 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any
+
+
+def _accept_known_fields(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Filter *data* to the dataclass fields of *cls*, checking required ones."""
+    names = {f.name for f in fields(cls)}
+    accepted = {key: value for key, value in data.items() if key in names}
+    required = {
+        f.name
+        for f in fields(cls)
+        if f.default is MISSING and f.default_factory is MISSING
+    }
+    missing = required - accepted.keys()
+    if missing:
+        raise ValueError(f"missing required fields: {', '.join(sorted(missing))}")
+    return accepted
 
 
 @dataclass(slots=True)
@@ -84,7 +99,14 @@ class MessageEnvelope:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MessageEnvelope":
-        return cls(**data)
+        """Build an envelope, ignoring keys this version does not know about.
+
+        A newer client may add fields; an older one must still be able to read
+        the message text rather than dying with a TypeError. Missing *required*
+        fields raise ValueError, which parse_armored_message already converts
+        into a friendly EnvelopeError.
+        """
+        return cls(**_accept_known_fields(cls, data))
 
 
 @dataclass(slots=True)
@@ -95,6 +117,10 @@ class AppState:
     warnings_acknowledged: bool = False
     oauth_secret_path: str | None = None
     remember_default_passphrase: bool = False
+    auto_update_enabled: bool = True
+    last_update_check_at: str | None = None
+    update_check_backoff_until: str | None = None
+    last_installed_version: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,4 +128,18 @@ class AppState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppState":
-        return cls(**data)
+        """Load saved state, tolerating keys written by a different version.
+
+        Without this, a state.json written by a newer build crashes an older
+        one on startup, before any UI exists to report the problem.
+        """
+        known = _accept_known_fields(cls, data)
+        unknown = {
+            key: value
+            for key, value in data.items()
+            if key != "extra" and key not in {f.name for f in fields(cls)}
+        }
+        state = cls(**known)
+        if unknown:
+            state.extra.update(unknown)
+        return state

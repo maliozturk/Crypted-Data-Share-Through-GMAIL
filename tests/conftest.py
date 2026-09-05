@@ -46,3 +46,8 @@ def app_context(repository: AppRepository) -> AppContext:
         crypto_service=CryptoService(),
         mail_service=MailService(repository),
     )
+
+@pytest.fixture(autouse=True)
+def _disable_updates(monkeypatch):
+    """Stop every test from reaching the real update endpoints."""
+    monkeypatch.setenv("CRYPTED_MAIL_DISABLE_UPDATES", "1")
